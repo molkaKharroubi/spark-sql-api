@@ -16,23 +16,7 @@ This Java Spring Boot API enables users to write natural language questions and 
 
 ---
 
-## Project Structure
----
-NLP2SparkSQL
-├── src/
-│ ├── main/
-│ │ ├── java/com/NLP2SparkSQL/project/
-│ │ │ ├── controller/ # REST API Controllers (e.g. QueryController)
-│ │ │ ├── service/ # Services: RAGService, LangChainSQLService
-│ │ │ ├── dto/ # DTOs: QueryRequest, QueryResponse
-│ │ │ └── config/ # Spark and LangChain configuration
-│ │ └── resources/
-│ │ └── application.properties
-│ └── test/
-│ └── unit tests
-├── pom.xml
-└── README.md
----
+
 ## Features
 
 - Natural language to Spark SQL translation
@@ -79,9 +63,9 @@ app.max-query-length=10000
 app.enable-sql-validation=true
 app.enable-fallback-context=true
 ```
-
-## Setup & Run
 ---
+## Setup & Run
+
 git clone https://github.com/your-username/NLP2SparkSQL.git
 cd NLP2SparkSQL
 mvn clean install
