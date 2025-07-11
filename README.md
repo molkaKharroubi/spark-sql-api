@@ -66,7 +66,7 @@ app.enable-fallback-context=true
 ---
 ## Setup & Run
 
-git clone https://github.com/your-username/NLP2SparkSQL.git
+git clone https://github.com/your-username/NLP2SparkSQL.git](https://github.com/molkaKharroubi/spark-sql-api.git
 
 cd NLP2SparkSQL
 
