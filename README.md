@@ -67,10 +67,13 @@ app.enable-fallback-context=true
 ## Setup & Run
 
 git clone https://github.com/your-username/NLP2SparkSQL.git
+
 cd NLP2SparkSQL
+
 mvn clean install
+
 mvn spring-boot:run
----
+
 ## Access API
 
 API Base URL: http://localhost:8080
