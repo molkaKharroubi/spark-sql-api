@@ -2,6 +2,7 @@ package com.NLP2SparkSQL.project.utils;
 
 import lombok.extern.slf4j.Slf4j;
 
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.regex.Pattern;
 
