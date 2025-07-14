@@ -41,34 +41,10 @@ This Java Spring Boot API enables users to write natural language questions and 
 
 ---
 
-## Configuration
 
-All configurations are managed in `application.properties`:
-
-```properties
-# App Info
-spring.application.name=project
-server.port=8080
-
-# Qdrant
-qdrant.url=http://localhost:6333
-qdrant.collection.name=my_sql_docs
-
-# Ollama
-ollama.url=http://localhost:11434
-ollama.model=qwen3:1.7b
-
-# LangChain
-app.max-query-length=10000
-app.enable-sql-validation=true
-app.enable-fallback-context=true
-```
----
 ## Setup & Run
 
 git clone https://github.com/your-username/NLP2SparkSQL.git](https://github.com/molkaKharroubi/spark-sql-api.git
-
-cd NLP2SparkSQL
 
 mvn clean install
 
