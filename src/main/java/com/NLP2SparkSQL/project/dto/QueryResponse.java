@@ -10,4 +10,5 @@ import lombok.NoArgsConstructor;
 public class QueryResponse {
     private String sparkSql;
     private String result;
+    private long time;
 }

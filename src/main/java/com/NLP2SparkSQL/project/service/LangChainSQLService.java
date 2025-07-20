@@ -1,36 +1,103 @@
 package com.NLP2SparkSQL.project.service;
 
 import dev.langchain4j.model.ollama.OllamaLanguageModel;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 
+import java.time.Duration;
 import java.util.regex.Pattern;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 
 @Slf4j
 @Service
+@Getter
 public class LangChainSQLService {
 
     private final OllamaLanguageModel model;
+    private final long timeoutSeconds;
 
-    // Filtrage des instructions réellement dangereuses
     private static final Pattern FORBIDDEN_PATTERN = Pattern.compile(
-            "(?i)(SCRIPT|DECLARE|\\bEXEC\\b|--|;\\s*--)", Pattern.CASE_INSENSITIVE
+            "(?i)(SCRIPT|DECLARE|\\bEXEC\\b|\\bSP_\\b|\\bXP_\\b|--|;\\s*--)", Pattern.CASE_INSENSITIVE
     );
 
-    @Value("${ollama.url:http://localhost:11434}")
-    private String ollamaUrl;
+    public LangChainSQLService(
+            @Value("${ollama.url:http://localhost:11434}") String ollamaUrl,
+            @Value("${ollama.model:qwen3:1.7b}") String modelName,
+            @Value("${ollama.timeout:600}") long timeoutSeconds
+    ) {
+        this.timeoutSeconds = timeoutSeconds;
+        log.info("Initializing Ollama model with URL: {}, model: {}, timeout: {}s", 
+                ollamaUrl, modelName, timeoutSeconds);
 
-    @Value("${ollama.model:qwen3:1.7b}")
-    private String modelName;
+        // Configure system properties for HTTP timeouts
+        configureSystemHttpProperties();
 
-    public LangChainSQLService() {
+        // Build the model with timeout configuration
         this.model = OllamaLanguageModel.builder()
-                .baseUrl("http://localhost:11434")
-                .modelName("qwen3:1.7b")
+                .baseUrl(ollamaUrl)
+                .modelName(modelName)
                 .temperature(0.1)
-                .timeout(java.time.Duration.ofSeconds(120))
+                .timeout(Duration.ofSeconds(timeoutSeconds))
+                .maxRetries(3)
                 .build();
+
+        log.info("Ollama model configured successfully");
+    }
+
+    private void configureSystemHttpProperties() {
+        // Configure system-wide HTTP timeouts
+        System.setProperty("http.keepAlive", "true");
+        System.setProperty("http.maxConnections", "10");
+        System.setProperty("http.maxRedirects", "3");
+        
+        // Configure connection and read timeouts
+        System.setProperty("sun.net.client.defaultConnectTimeout", "30000");
+        System.setProperty("sun.net.client.defaultReadTimeout", String.valueOf(timeoutSeconds * 1000));
+        
+        log.debug("System HTTP properties configured with timeout: {}s", timeoutSeconds);
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void onApplicationReady() {
+        log.info("Application ready, testing Ollama connection...");
+        try {
+            testConnection();
+            log.info("Ollama connection test successful");
+        } catch (Exception e) {
+            log.error("Ollama connection test failed: {}", e.getMessage());
+        }
+    }
+
+    private void testConnection() {
+        try {
+            String testPrompt = "SELECT 1 as test;";
+            
+            // Use CompletableFuture for timeout control
+            CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return model.generate(testPrompt).content();
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            
+            String response = future.get(30, TimeUnit.SECONDS);
+            log.debug("Test connection response: {}", response);
+            
+        } catch (TimeoutException e) {
+            log.error("Connection test timed out after 30 seconds");
+            throw new RuntimeException("Connection test timeout", e);
+        } catch (Exception e) {
+            log.error("Connection test failed: {}", e.getMessage());
+            throw new RuntimeException("Connection test failed", e);
+        }
     }
 
     public String generateSQL(String context, String question) {
@@ -47,7 +114,7 @@ public class LangChainSQLService {
             }
 
             String prompt = buildEnhancedPrompt(context, question);
-            String generatedSQL = generateWithRetry(prompt, 3);
+            String generatedSQL = generateWithTimeoutControl(prompt, requestId);
             String cleanedSQL = cleanSQL(generatedSQL);
 
             if (!isValidSparkSQL(cleanedSQL)) {
@@ -64,68 +131,133 @@ public class LangChainSQLService {
         }
     }
 
-    private String buildEnhancedPrompt(String context, String question) {
-        return """
-                You are a Spark SQL expert. Generate ONLY valid Spark SQL queries (SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, WITH, RANK, etc.)
-                based on the provided schema.
-
-                RULES:
-                1. Use ONLY tables and columns mentioned in the schema
-                2. Do not invent schema or table names
-                3. Use valid Spark SQL syntax
-                4. Respond with 'INSUFFICIENT_DATA' if schema does not allow answering
-                5. Prefer Spark SQL functions like AVG(), COUNT(), RANK() OVER (...) etc. where appropriate
-                6. Support DML (INSERT, UPDATE, DELETE), DDL (CREATE, DROP), CTEs (WITH), aggregates, joins, subqueries, etc.
-
-                EXAMPLES:
-                Schema: TABLE employees (id INT, name STRING, salary DOUBLE)
-                Question: Add a new employee named 'Alice' with a salary of 3000
-                SQL: INSERT INTO employees (id, name, salary) VALUES (1, 'Alice', 3000);
-
-                Schema: TABLE orders (id INT, total DOUBLE, customer_id INT)
-                Question: Total order value per customer
-                SQL: SELECT customer_id, SUM(total) AS total_value FROM orders GROUP BY customer_id;
-
-                DATABASE SCHEMA:
-                """ + context + "\n\nQUESTION: " + question + "\n\nSPARK SQL QUERY:";
-    }
-
-    private String generateWithRetry(String prompt, int maxRetries) {
+    private String generateWithTimeoutControl(String prompt, String requestId) {
+        int maxRetries = 3;
         Exception lastException = null;
 
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                log.debug("SQL generation attempt {} of {}", attempt, maxRetries);
-                Object response = model.generate(prompt);
+                log.debug("[{}] SQL generation attempt {} of {}", requestId, attempt, maxRetries);
+                
+                if (attempt > 1) {
+                    log.info("[{}] Retrying SQL generation, attempt {} of {}", requestId, attempt, maxRetries);
+                }
+                
+                // Use CompletableFuture for better timeout control
+                CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        long startTime = System.currentTimeMillis();
+                        String response = model.generate(prompt).content();
+                        long endTime = System.currentTimeMillis();
+                        
+                        log.debug("[{}] Generation took {} ms", requestId, endTime - startTime);
+                        return response;
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+                
+                String response = future.get(timeoutSeconds, TimeUnit.SECONDS);
                 String result = extractContentFromResponse(response);
 
                 if (result != null && !result.trim().isEmpty()) {
+                    log.debug("[{}] Successfully generated SQL on attempt {}", requestId, attempt);
                     return result;
                 }
+                
+                log.warn("[{}] Empty response received on attempt {}", requestId, attempt);
+                
+            } catch (TimeoutException e) {
+                lastException = e;
+                log.error("[{}] Timeout occurred during SQL generation attempt {} ({}s)", 
+                         requestId, attempt, timeoutSeconds);
+                
+            } catch (ExecutionException e) {
+                lastException = e.getCause() instanceof Exception ? (Exception) e.getCause() : e;
+                log.warn("[{}] SQL generation attempt {} failed: {}", requestId, attempt, lastException.getMessage());
+                
             } catch (Exception e) {
                 lastException = e;
-                log.warn("SQL generation attempt {} failed: {}", attempt, e.getMessage());
-                if (attempt < maxRetries) {
-                    try {
-                        Thread.sleep(1000 * attempt);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
+                log.warn("[{}] SQL generation attempt {} failed: {}", requestId, attempt, e.getMessage());
+            }
+                
+            if (attempt < maxRetries) {
+                try {
+                    // Exponential backoff
+                    long sleepTime = 2000 * (long) Math.pow(2, attempt - 1);
+                    log.debug("[{}] Sleeping for {} ms before retry", requestId, sleepTime);
+                    Thread.sleep(sleepTime);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    log.warn("[{}] Retry interrupted", requestId);
+                    break;
                 }
             }
         }
-        throw new RuntimeException("Failed to generate SQL after " + maxRetries + " attempts", lastException);
+        
+        String errorMessage = String.format("[%s] Failed to generate SQL after %d attempts", requestId, maxRetries);
+        if (lastException != null) {
+            errorMessage += ": " + lastException.getMessage();
+        }
+        
+        throw new RuntimeException(errorMessage, lastException);
+    }
+
+    private String buildEnhancedPrompt(String context, String question) {
+        return """
+        You are an expert Spark SQL generator. Generate ONLY valid Spark SQL queries based on the provided schema.
+
+        CRITICAL RULES:
+        1. Use ONLY tables and columns mentioned in the schema
+        2. Do not invent or assume any table/column names
+        3. Always use proper Spark SQL syntax
+        4. For questions about distribution/grouping, use GROUP BY with appropriate aggregation
+        5. When joining tables, use explicit JOIN syntax with ON conditions
+        6. Use table aliases for better readability
+        7. Return only the SQL query, no explanations
+        8. End the query with semicolon
+        9. Keep the query concise and focused
+
+        SPARK SQL FEATURES TO USE:
+        - Window functions: ROW_NUMBER(), RANK(), DENSE_RANK() OVER (...)
+        - Common Table Expressions (WITH clause)
+        - Aggregations: COUNT(), SUM(), AVG(), MAX(), MIN()
+        - Joins: INNER JOIN, LEFT JOIN, RIGHT JOIN
+        - Grouping: GROUP BY, HAVING
+        - Ordering: ORDER BY
+        - ALTER TABLE
+        EXAMPLES:
+        Schema: employees (emp_id INT, name STRING, department_id INT), departments (department_id INT, dept_name STRING)
+        Question: "List employees by department"
+        SQL: SELECT d.dept_name, e.name FROM employees e JOIN departments d ON e.department_id = d.department_id ORDER BY d.dept_name;
+
+        Schema: sales (id INT, amount DOUBLE, region STRING)
+        Question: "Show sales distribution by region"
+        SQL: SELECT region, COUNT(*) as count, SUM(amount) as total_amount FROM sales GROUP BY region ORDER BY total_amount DESC;
+
+        DATABASE SCHEMA:
+        """ + context + """
+
+        QUESTION: """ + question + """
+
+        SPARK SQL QUERY:""";
     }
 
     private String extractContentFromResponse(Object response) {
+        if (response == null) {
+            return "";
+        }
+        
         if (response instanceof String) {
             return (String) response;
         } else {
             try {
+                // Try to call content() method if it exists
                 var method = response.getClass().getMethod("content");
-                return (String) method.invoke(response);
+                Object content = method.invoke(response);
+                return content != null ? content.toString() : "";
             } catch (Exception e) {
+                log.debug("Could not extract content using content() method, using toString(): {}", e.getMessage());
                 return response.toString();
             }
         }
@@ -134,6 +266,7 @@ public class LangChainSQLService {
     private String cleanSQL(String sql) {
         if (sql == null || sql.trim().isEmpty()) return "";
 
+        // Initial cleanup - remove comments, code blocks, etc.
         String cleaned = sql
                 .replaceAll("(?is)<think>.*?</think>", "")
                 .replaceAll("(?s)/\\*.*?\\*/", "")
@@ -149,11 +282,29 @@ public class LangChainSQLService {
             return "SELECT 'INSUFFICIENT_DATA' AS message;";
         }
 
-        if (cleaned.toUpperCase().contains("SELECT")) {
-            int selectIndex = cleaned.toUpperCase().indexOf("SELECT");
-            cleaned = cleaned.substring(selectIndex);
+        // Better handling of CTEs and regular queries
+        String sqlUpper = cleaned.toUpperCase().trim();
+        
+        // Find the first valid SQL keyword
+        String[] validStarts = {"WITH", "SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP","ALTER TABLE"};
+        int earliestIndex = -1;
+        
+        for (String keyword : validStarts) {
+            int index = sqlUpper.indexOf(keyword);
+            if (index != -1 && (earliestIndex == -1 || index < earliestIndex)) {
+                earliestIndex = index;
+            }
+        }
+        
+        // If we find a valid keyword, start from there
+        if (earliestIndex != -1) {
+            cleaned = cleaned.substring(earliestIndex);
         }
 
+        // Clean up multiple spaces
+        cleaned = cleaned.replaceAll("\\s+", " ");
+
+        // Ensure the query ends with semicolon
         if (!cleaned.endsWith(";")) {
             cleaned += ";";
         }
@@ -164,9 +315,8 @@ public class LangChainSQLService {
     private boolean isValidSparkSQL(String sql) {
         if (sql == null || sql.trim().isEmpty()) return false;
 
-        String sqlUpper = sql.toUpperCase().trim();
+        String sqlUpper = sql.trim().toUpperCase();
 
-        // Instructions valides
         boolean validStart = sqlUpper.startsWith("SELECT") ||
                              sqlUpper.startsWith("INSERT") ||
                              sqlUpper.startsWith("UPDATE") ||
@@ -201,11 +351,20 @@ public class LangChainSQLService {
 
     public boolean isHealthy() {
         try {
-            String testResponse = generateSQL(
-                    "TABLE test (id INT, name STRING)",
-                    "How many records are there?"
-            );
-            return testResponse != null && !testResponse.contains("ERROR:");
+            log.debug("Performing health check...");
+            
+            CompletableFuture<String> healthFuture = CompletableFuture.supplyAsync(() -> {
+                return generateSQL(
+                        "TABLE test (id INT, name STRING)",
+                        "How many records are there?"
+                );
+            });
+            
+            String testResponse = healthFuture.get(30, TimeUnit.SECONDS);
+            boolean healthy = testResponse != null && !testResponse.contains("ERROR:");
+            log.debug("Health check result: {}", healthy);
+            return healthy;
+            
         } catch (Exception e) {
             log.error("Health check failed: {}", e.getMessage());
             return false;

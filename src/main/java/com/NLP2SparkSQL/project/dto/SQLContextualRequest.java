@@ -10,5 +10,6 @@ public class SQLContextualRequest {
     private String question;
 
     @NotBlank(message = "Spark context must not be blank")
+
     private String sparkContext;
 }

@@ -12,8 +12,8 @@
         <version>3.2.4</version>
         <relativePath/>
     </parent>
-
-    <groupId>com.NLP2SparkSQL</groupId>
+    
+  <groupId>com.NLP2SparkSQL</groupId>
     <artifactId>project</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>project</name>
@@ -21,10 +21,15 @@
 
     <properties>
         <java.version>17</java.version>
-        <langchain4j.version>0.24.0</langchain4j.version> <!-- Version stable avec starter -->
+        <langchain4j.version>0.24.0</langchain4j.version> 
     </properties>
 
     <dependencies>
+    <dependency>
+    <groupId>com.squareup.okhttp3</groupId>
+    <artifactId>okhttp</artifactId>
+    <version>4.12.0</version>
+</dependency>
 <dependency>
     <groupId>javax.annotation</groupId>
     <artifactId>javax.annotation-api</artifactId>
