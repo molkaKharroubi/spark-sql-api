@@ -52,6 +52,4 @@ mvn spring-boot:run
 
 ## Access API
 
-API Base URL: http://localhost:8080
-
 Swagger UI: http://localhost:8080/swagger-ui/index.html
