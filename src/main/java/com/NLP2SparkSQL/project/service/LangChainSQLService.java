@@ -16,7 +16,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 @Slf4j
-@Service
+@Service 
 @Getter
 public class LangChainSQLService {
 
@@ -204,7 +204,7 @@ public class LangChainSQLService {
     }
 
     private String buildEnhancedPrompt(String context, String question) {
-        return """
+    return """
         You are an expert Spark SQL generator. Generate ONLY valid Spark SQL queries based on the provided schema.
 
         CRITICAL RULES:
@@ -225,7 +225,14 @@ public class LangChainSQLService {
         - Joins: INNER JOIN, LEFT JOIN, RIGHT JOIN
         - Grouping: GROUP BY, HAVING
         - Ordering: ORDER BY
-        - ALTER TABLE
+        - Use LEFT JOIN to include rows with no matching related records
+        - For filtering by date, use BETWEEN with inclusive dates
+
+        COMPLEX QUERY TIPS:
+        - For filters on minimum number of reviews and average ratings, use HAVING clauses.
+        - When combining aggregated data from multiple tables (e.g., reviews and orders), use CTEs (WITH clauses) to compute intermediate results, then join them.
+        - Always handle possible missing data with COALESCE().
+
         EXAMPLES:
         Schema: employees (emp_id INT, name STRING, department_id INT), departments (department_id INT, dept_name STRING)
         Question: "List employees by department"
@@ -235,13 +242,40 @@ public class LangChainSQLService {
         Question: "Show sales distribution by region"
         SQL: SELECT region, COUNT(*) as count, SUM(amount) as total_amount FROM sales GROUP BY region ORDER BY total_amount DESC;
 
+        Schema: products (product_id INT, product_name STRING, category STRING),
+                reviews (review_id INT, product_id INT, rating DOUBLE, review_date DATE),
+                orders (order_id INT, product_id INT, quantity INT, order_date DATE)
+        Question: "For each product with at least 5 reviews and average rating > 4.5 in 2023, show product name, category, average rating, number of reviews, and total orders in 2023 ordered by rating desc"
+        SQL: |
+            WITH ReviewStats AS (
+                SELECT product_id, COUNT(*) AS total_reviews, AVG(rating) AS avg_rating
+                FROM reviews
+                WHERE review_date BETWEEN '2023-01-01' AND '2023-12-31'
+                GROUP BY product_id
+                HAVING COUNT(*) >= 5 AND AVG(rating) > 4.5
+            ),
+            OrderStats AS (
+                SELECT product_id, SUM(quantity) AS total_orders
+                FROM orders
+                WHERE order_date BETWEEN '2023-01-01' AND '2023-12-31'
+                GROUP BY product_id
+            )
+            SELECT p.product_name, p.category, r.avg_rating, r.total_reviews, COALESCE(o.total_orders, 0) AS total_orders
+            FROM products p
+            JOIN ReviewStats r ON p.product_id = r.product_id
+            LEFT JOIN OrderStats o ON p.product_id = o.product_id
+            ORDER BY r.avg_rating DESC, total_orders DESC;
+
         DATABASE SCHEMA:
         """ + context + """
 
-        QUESTION: """ + question + """
+        QUESTION:
+        """ + question + """
 
-        SPARK SQL QUERY:""";
-    }
+        SPARK SQL QUERY:
+        """;
+}
+
 
     private String extractContentFromResponse(Object response) {
         if (response == null) {
@@ -323,6 +357,7 @@ public class LangChainSQLService {
                              sqlUpper.startsWith("DELETE") ||
                              sqlUpper.startsWith("CREATE") ||
                              sqlUpper.startsWith("DROP") ||
+                             sqlUpper.startsWith("ALTERA") ||
                              sqlUpper.startsWith("WITH");
 
         if (!validStart) return false;
