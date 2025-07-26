@@ -11,7 +11,7 @@ public class JacksonConfig {
     @Bean
     public Jackson2ObjectMapperBuilder jacksonBuilder() {
         return new Jackson2ObjectMapperBuilder()
-            // Autorise les retours à la ligne non échappés (ASCII < 32)
+            // Allows unescaped line breaks (ASCII < 32)
             .featuresToEnable(JsonParser.Feature.ALLOW_UNQUOTED_CONTROL_CHARS);
     }
 }

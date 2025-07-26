@@ -24,11 +24,16 @@ public class RagAndQuestionService {
             return new RagResponse("Question and SQL are empty", "", 0);
         }
 
-        String combinedText = preprocessText(question)
-                            + (sql != null && !sql.trim().isEmpty() ? "\nSQL: " + sql.trim() : "")
-                            + (schema != null && !schema.trim().isEmpty() ? "\nSchema: " + schema.trim() : "");
+        StringBuilder combinedText = new StringBuilder();
+        combinedText.append(preprocessText(question));
+        if (sql != null && !sql.trim().isEmpty()) {
+            combinedText.append("\nSQL: ").append(sql.trim());
+        }
+        if (schema != null && !schema.trim().isEmpty()) {
+            combinedText.append("\nSchema: ").append(schema.trim());
+        }
 
-        float[] embedding = EmbeddingUtils.embed(combinedText);
+        float[] embedding = EmbeddingUtils.embed(combinedText.toString());
 
         if (embedding == null || embedding.length == 0) {
             return new RagResponse("Failed to generate embedding", "", 0);
@@ -36,16 +41,38 @@ public class RagAndQuestionService {
 
         Map<String, String> result = qdrantService.searchRelevantContextStructured(embedding);
 
-        long end = System.currentTimeMillis();
-        long duration = end - start;
+        long duration = System.currentTimeMillis() - start;
 
         log.info("RAG search took {} ms for combined input", duration);
 
-        return new RagResponse(
-            result.getOrDefault("question", ""),
-            result.getOrDefault("sql", ""),
-            duration
-        );
+        if (result == null) {
+            return new RagResponse("", "", duration);
+        }
+
+        // Vérification simplifiée - juste s'assurer que les données sont présentes
+        if (!qdrantService.hasValidResult(result)) {
+            log.info("Aucune donnée valide trouvée dans le résultat");
+            return new RagResponse("", "", duration);
+        }
+
+        String foundQuestion = result.getOrDefault("question", "");
+        String foundSql = result.getOrDefault("sql", "");
+        String confidenceStr = result.getOrDefault("confidence", "0");
+
+        long confidenceValue = 0;
+        try {
+            // Garder le score pour information, mais ne plus l'utiliser pour filtrer
+            confidenceValue = Math.round(Double.parseDouble(confidenceStr) * 100);
+        } catch (NumberFormatException e) {
+            log.warn("Unable to parse confidence value: {}", confidenceStr);
+        }
+
+        RagResponse response = new RagResponse(foundQuestion, foundSql, duration);
+        response.setscore(confidenceValue);
+
+        log.info("Plus proche voisin retourné avec score: {}", confidenceValue);
+
+        return response;
     }
 
     // Surcharge pour ne prendre que la question

@@ -24,7 +24,8 @@ public class EmbeddingUtils {
     private static final Set<String> BUSINESS_KEYWORDS = Set.of(
         "customer", "order", "product", "sale", "revenue", "profit", "quantity", "price",
         "total", "amount", "date", "time", "month", "year", "category", "status", "name",
-        "email", "address", "phone", "city", "state", "country"
+        "email", "address", "phone", "city", "state", "country", "employee", "job", "performance",
+        "review", "department", "salary", "manager", "hire", "position", "work", "company"
     );
 
     /**
@@ -35,17 +36,23 @@ public class EmbeddingUtils {
      */
     public static float[] embed(String text) {
         if (text == null || text.trim().isEmpty()) {
+            log.warn("Empty or null text provided for embedding");
             return new float[EMBEDDING_DIM];
         }
 
         try {
+            log.debug("Generating embedding for text: '{}'", text.substring(0, Math.min(text.length(), 100)));
+            
             // Preprocess text
             String processedText = preprocessText(text);
+            log.debug("Preprocessed text: '{}'", processedText);
             
             // Tokenize
             List<String> tokens = tokenize(processedText);
+            log.debug("Extracted {} tokens: {}", tokens.size(), tokens.subList(0, Math.min(tokens.size(), 10)));
             
             if (tokens.isEmpty()) {
+                log.warn("No tokens extracted from text: '{}'", text);
                 return new float[EMBEDDING_DIM];
             }
             
@@ -53,7 +60,15 @@ public class EmbeddingUtils {
             float[] embedding = generateEmbedding(tokens);
             
             // Normalize
-            return normalizeVector(embedding);
+            float[] normalizedEmbedding = normalizeVector(embedding);
+            
+            // Log embedding statistics
+            float norm = calculateNorm(normalizedEmbedding);
+            float mean = calculateMean(normalizedEmbedding);
+            log.debug("Generated embedding - Norm: {}, Mean: {}, Non-zero elements: {}", 
+                     norm, mean, countNonZero(normalizedEmbedding));
+            
+            return normalizedEmbedding;
             
         } catch (Exception e) {
             log.error("Error generating embedding for text: {}", text, e);
@@ -65,21 +80,33 @@ public class EmbeddingUtils {
      * Preprocess text for better embedding generation
      */
     private static String preprocessText(String text) {
-        return text.toLowerCase()
-                  .replaceAll("[^a-zA-Z0-9\\s]", " ")
-                  .replaceAll("\\s+", " ")
-                  .trim();
+        // Enhanced preprocessing for better SQL/business context understanding
+        String processed = text.toLowerCase()
+                              .replaceAll("\\bwhich\\b", "what") // Normalize question words
+                              .replaceAll("\\bassociated with\\b", "related to")
+                              .replaceAll("\\bhave had\\b", "have")
+                              .replaceAll("\\bat least one\\b", "one or more")
+                              .replaceAll("[^a-zA-Z0-9\\s]", " ")
+                              .replaceAll("\\s+", " ")
+                              .trim();
+        
+        return processed;
     }
 
     /**
-     * Tokenize text into words
+     * Tokenize text into words with improved filtering
      */
     private static List<String> tokenize(String text) {
         List<String> tokens = new ArrayList<>();
         String[] words = text.split("\\s+");
         
+        // Common stop words to filter out
+        Set<String> stopWords = Set.of("the", "is", "are", "was", "were", "be", "been", "being", 
+                                      "have", "has", "had", "do", "does", "did", "will", "would", 
+                                      "could", "should", "may", "might", "must", "can", "a", "an", "to");
+        
         for (String word : words) {
-            if (word.length() > 2) { // Filter out very short words
+            if (word.length() > 1 && !stopWords.contains(word)) { // Lowered threshold and filter stop words
                 tokens.add(word);
             }
         }
@@ -88,12 +115,13 @@ public class EmbeddingUtils {
     }
 
     /**
-     * Generate embedding vector from tokens
+     * Generate embedding vector from tokens with improved weighting
      */
     private static float[] generateEmbedding(List<String> tokens) {
         float[] embedding = new float[EMBEDDING_DIM];
         Map<String, Float> tokenWeights = calculateTokenWeights(tokens);
         
+        int processedTokens = 0;
         for (Map.Entry<String, Float> entry : tokenWeights.entrySet()) {
             String token = entry.getKey();
             float weight = entry.getValue();
@@ -104,8 +132,10 @@ public class EmbeddingUtils {
             for (int i = 0; i < EMBEDDING_DIM; i++) {
                 embedding[i] += tokenVector[i] * weight;
             }
+            processedTokens++;
         }
         
+        log.debug("Processed {} unique tokens for embedding generation", processedTokens);
         return embedding;
     }
 
@@ -121,7 +151,7 @@ public class EmbeddingUtils {
             tokenCounts.put(token, tokenCounts.getOrDefault(token, 0) + 1);
         }
         
-        // Calculate TF-IDF-like weights
+        // Calculate improved weights
         for (Map.Entry<String, Integer> entry : tokenCounts.entrySet()) {
             String token = entry.getKey();
             int count = entry.getValue();
@@ -129,14 +159,22 @@ public class EmbeddingUtils {
             float tf = (float) count / tokens.size();
             float weight = tf;
             
-            // Boost SQL keywords
+            // Boost SQL keywords more aggressively
             if (SQL_KEYWORDS.contains(token)) {
-                weight *= 2.0f;
+                weight *= 3.0f;
+                log.debug("Boosted SQL keyword '{}' with weight: {}", token, weight);
             }
             
             // Boost business domain keywords
             if (BUSINESS_KEYWORDS.contains(token)) {
-                weight *= 1.5f;
+                weight *= 2.0f;
+                log.debug("Boosted business keyword '{}' with weight: {}", token, weight);
+            }
+            
+            // Boost question-specific terms
+            if (token.equals("jobs") || token.equals("employees") || token.equals("performance") || token.equals("review")) {
+                weight *= 2.5f;
+                log.debug("Boosted domain-specific term '{}' with weight: {}", token, weight);
             }
             
             tokenWeights.put(token, weight);
@@ -151,10 +189,13 @@ public class EmbeddingUtils {
     private static float[] generateTokenVector(String token) {
         float[] vector = new float[EMBEDDING_DIM];
         
+        // Use the token's bytes for more deterministic hashing
+        byte[] tokenBytes = token.getBytes(StandardCharsets.UTF_8);
+        
         // Use multiple hash functions for better distribution
-        int hash1 = token.hashCode();
-        int hash2 = token.hashCode() * 31;
-        int hash3 = token.hashCode() * 37;
+        int hash1 = Arrays.hashCode(tokenBytes);
+        int hash2 = token.hashCode() * 31 + token.length();
+        int hash3 = token.hashCode() * 37 + tokenBytes.length;
         
         // Generate pseudo-random values using different seeds
         Random random1 = new Random(hash1);
@@ -162,10 +203,12 @@ public class EmbeddingUtils {
         Random random3 = new Random(hash3);
         
         for (int i = 0; i < EMBEDDING_DIM; i++) {
-            float val1 = (float) (random1.nextGaussian() * 0.3f);
-float val2 = (float) (random2.nextGaussian() * 0.3f);
-float val3 = (float) (random3.nextGaussian() * 0.3f);
-
+            // Improved Gaussian distribution with better parameters
+            float val1 = (float) (random1.nextGaussian() * 0.4f);
+            float val2 = (float) (random2.nextGaussian() * 0.4f);
+            float val3 = (float) (random3.nextGaussian() * 0.4f);
+            
+            // Mix the values for better distribution
             vector[i] = (val1 + val2 + val3) / 3.0f;
         }
         
@@ -173,7 +216,7 @@ float val3 = (float) (random3.nextGaussian() * 0.3f);
     }
 
     /**
-     * Normalize vector to unit length
+     * Normalize vector to unit length with better numerical stability
      */
     private static float[] normalizeVector(float[] vector) {
         float norm = 0.0f;
@@ -185,13 +228,43 @@ float val3 = (float) (random3.nextGaussian() * 0.3f);
         
         norm = (float) Math.sqrt(norm);
         
-        if (norm > 0) {
+        if (norm > 1e-6f) { // Better numerical stability
             for (int i = 0; i < vector.length; i++) {
                 vector[i] /= norm;
             }
+        } else {
+            log.warn("Vector norm too small ({}), returning zero vector", norm);
+            Arrays.fill(vector, 0.0f);
         }
         
         return vector;
+    }
+
+    // Helper methods for debugging
+    private static float calculateNorm(float[] vector) {
+        float norm = 0.0f;
+        for (float v : vector) {
+            norm += v * v;
+        }
+        return (float) Math.sqrt(norm);
+    }
+    
+    private static float calculateMean(float[] vector) {
+        float sum = 0.0f;
+        for (float v : vector) {
+            sum += v;
+        }
+        return sum / vector.length;
+    }
+    
+    private static int countNonZero(float[] vector) {
+        int count = 0;
+        for (float v : vector) {
+            if (Math.abs(v) > 1e-6f) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /**
@@ -216,7 +289,9 @@ float val3 = (float) (random3.nextGaussian() * 0.3f);
             return 0.0f;
         }
         
-        return dotProduct / (float) (Math.sqrt(norm1) * Math.sqrt(norm2));
+        float similarity = dotProduct / (float) (Math.sqrt(norm1) * Math.sqrt(norm2));
+        log.debug("Calculated cosine similarity: {}", similarity);
+        return similarity;
     }
 
     /**
@@ -317,4 +392,15 @@ float val3 = (float) (random3.nextGaussian() * 0.3f);
         return EMBEDDING_DIM;
     }
 
+    /**
+     * Debug method to print embedding info
+     */
+    public static void debugEmbedding(float[] embedding, String text) {
+        log.info("=== EMBEDDING DEBUG for text: '{}' ===", text);
+        log.info("Dimension: {}", embedding.length);
+        log.info("Norm: {}", calculateNorm(embedding));
+        log.info("Mean: {}", calculateMean(embedding));
+        log.info("Non-zero elements: {}", countNonZero(embedding));
+        log.info("First 10 values: {}", Arrays.toString(Arrays.copyOf(embedding, Math.min(10, embedding.length))));
+    }
 }

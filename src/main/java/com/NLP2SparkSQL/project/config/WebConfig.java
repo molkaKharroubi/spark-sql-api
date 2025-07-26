@@ -14,10 +14,10 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void extendMessageConverters(List<HttpMessageConverter<?>> converters) {
-        // Recherche le convertisseur Jackson existant
+        // Search for the existing Jackson converter
         for (HttpMessageConverter<?> converter : converters) {
             if (converter instanceof MappingJackson2HttpMessageConverter jacksonConverter) {
-                // On ajoute text/plain en type supporté
+                // Add text/plain as a supported type
                 List<MediaType> types = new ArrayList<>(jacksonConverter.getSupportedMediaTypes());
                 types.add(MediaType.TEXT_PLAIN);
                 jacksonConverter.setSupportedMediaTypes(types);

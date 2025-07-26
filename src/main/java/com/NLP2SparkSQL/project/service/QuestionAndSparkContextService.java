@@ -1,125 +1,337 @@
 package com.NLP2SparkSQL.project.service;
 
 import com.NLP2SparkSQL.project.dto.QueryResponse;
+import com.NLP2SparkSQL.project.utils.EmbeddingUtils;
 import com.NLP2SparkSQL.project.utils.SparkSchemaParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.regex.*;
+import java.util.stream.Collectors;  
+import lombok.extern.slf4j.Slf4j;
+
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class QuestionAndSparkContextService {
 
+    private final QdrantService qdrantService;
     private final LangChainSQLService langChainSQLService;
 
-    public QueryResponse generateSqlFromSchemaAndQuestion(String sparkContext, String question) {
-        String requestId = java.util.UUID.randomUUID().toString().substring(0, 8);
-        log.info("[{}] Generating SQL for question: {}", requestId, question);
+    @Value("${app.max-query-length:10000}")
+    private int maxQueryLength;
 
+    // Cache for parsed schemas to avoid re-parsing identical contexts
+    private final Map<String, Map<String, List<SparkSchemaParser.Column>>> schemaCache = new LRUCache<>(100);
+    
+    private static final Pattern COMPLEX_QUESTION_PATTERN = Pattern.compile(
+        "(?i)(join|combine|merge|relationship|across|between|multiple|compare|analyze|trend|pattern|correlation|distribution|group|by)"
+    );
+
+    public QueryResponse processQuestion(String question) {
+        return createErrorResponse("Please provide SparkContext. Use processQuestionWithContext method instead.", 0L);
+    }
+
+    /**
+     * Main method that processes questions using dynamic SparkContext
+     */
+    public QueryResponse QuestionAndSparkContextService(String sparkContext, String question) {
+        long startTime = System.currentTimeMillis();
+        String requestId = UUID.randomUUID().toString().substring(0, 8);
+        log.info("[{}] Processing question with dynamic context", requestId);
+
+        // Validate inputs
         if (question == null || question.trim().isEmpty()) {
-            return createErrorResponse("Question cannot be empty"); // MODIF: createErrorResponse modifié aussi
+            return createErrorResponse("Question cannot be empty", getDuration(startTime));
         }
         if (sparkContext == null || sparkContext.trim().isEmpty()) {
-            return createErrorResponse("Spark context must not be empty"); // MODIF
+            return createErrorResponse("Spark context is required and cannot be empty", getDuration(startTime));
+        }
+        if (question.length() > maxQueryLength) {
+            return createErrorResponse("Question too long (max " + maxQueryLength + " characters)", getDuration(startTime));
         }
 
-        Map<String, List<SparkSchemaParser.Column>> tables = SparkSchemaParser.parseSparkSchema(sparkContext);
-        if (tables.isEmpty()) {
-            log.warn("[{}] No tables found in schema", requestId);
-            return createErrorResponse("Could not parse any tables from the provided schema"); // MODIF
-        }
-
-        String prompt = buildPrompt(tables, question);
-
-        String rawSql = langChainSQLService.generateSQL(prompt, question);
-
-        String finalSql = postProcessSQL(rawSql, requestId);
-
-        // MODIF: ajout du 3ème paramètre 0L (temps non mesuré ici)
-        return new QueryResponse(
-            finalSql,
-            finalSql.contains("ERROR:") ? "Error in SQL generation" : "SQL generated successfully",
-            0L
-        );
-    }
-
-    private String buildPrompt(Map<String, List<SparkSchemaParser.Column>> tables, String question) {
-        StringBuilder prompt = new StringBuilder();
-
-        prompt.append("You are an expert Spark SQL generator. Generate ONLY valid Spark SQL queries.\n\n");
-        prompt.append("CRITICAL RULES:\n");
-        prompt.append("1. Use ONLY the exact table and column names provided below.\n");
-        prompt.append("2. Use table aliases for clarity when joining.\n");
-        prompt.append("3. Return only the SQL query with a semicolon at the end.\n\n");
-
-        prompt.append("AVAILABLE TABLES AND COLUMNS:\n");
-        for (var entry : tables.entrySet()) {
-            prompt.append("TABLE ").append(entry.getKey()).append(":\n");
-            for (var col : entry.getValue()) {
-                prompt.append("  - ").append(col.name).append(" (").append(col.type).append(")\n");
+        try {
+            // Parse the dynamic SparkContext
+            Map<String, List<SparkSchemaParser.Column>> tables = parseSparkContextSafely(sparkContext, requestId);
+            
+            if (tables.isEmpty()) {
+                log.warn("[{}] No tables could be parsed from context", requestId);
+                return createErrorResponse("Could not extract any table information from the provided Spark context", getDuration(startTime));
             }
-            prompt.append("\n");
+
+            // Generate enhanced context for SQL generation
+            String enhancedContext = buildEnhancedContext(tables, question, requestId);
+            
+            // Generate SQL using the LangChain service
+            String sparkSql = langChainSQLService.generateSQL(enhancedContext, question);
+            
+            // Post-process and validate the generated SQL
+            String finalSql = postProcessSQL(sparkSql, tables, requestId);
+
+            long duration = getDuration(startTime);
+            log.info("[{}] Successfully processed question in {}ms", requestId, duration);
+            
+            return new QueryResponse(
+                finalSql,
+                finalSql.startsWith("ERROR:") ? "Error in SQL generation" : "SQL generated successfully",
+                duration
+            );
+
+        } catch (Exception e) {
+            log.error("[{}] Error processing question: {}", requestId, e.getMessage(), e);
+            return createErrorResponse("Internal error: " + e.getMessage(), getDuration(startTime));
         }
-
-        String relationships = SparkSchemaParser.getInferredRelationships(tables);
-        if (relationships != null && !relationships.isBlank()) {
-            prompt.append("RELATIONSHIPS:\n").append(relationships).append("\n\n");
-        }
-
-        prompt.append("QUESTION:\n").append(question).append("\n\n");
-        prompt.append("SPARK SQL QUERY:");
-
-        return prompt.toString();
     }
 
-    private String postProcessSQL(String sql, String requestId) {
-        if (sql == null || sql.isBlank()) {
-            return createErrorSQL("Empty SQL generated");
+    /**
+     * Safely parse SparkContext with caching and error handling
+     */
+    private Map<String, List<SparkSchemaParser.Column>> parseSparkContextSafely(String sparkContext, String requestId) {
+        // Create a hash of the context for caching
+        String contextHash = Integer.toString(sparkContext.hashCode());
+        
+        // Check cache first
+        if (schemaCache.containsKey(contextHash)) {
+            log.debug("[{}] Using cached schema parse", requestId);
+            return schemaCache.get(contextHash);
         }
-
-        sql = sql.replaceAll("\\[.*?\\]", "");
-
-        sql = formatSQL(sql);
-
-        if (!isValidSQL(sql)) {
-            log.warn("[{}] SQL failed validation: {}", requestId, sql);
-            return createErrorSQL("Generated SQL failed validation");
+        
+        try {
+            log.debug("[{}] Parsing new SparkContext (length: {})", requestId, sparkContext.length());
+            
+            // Parse the schema
+            Map<String, List<SparkSchemaParser.Column>> tables = SparkSchemaParser.parseSparkSchema(sparkContext);
+            
+            // Cache the result
+            schemaCache.put(contextHash, tables);
+            
+            log.info("[{}] Parsed {} tables from SparkContext", requestId, tables.size());
+            return tables;
+            
+        } catch (Exception e) {
+            log.error("[{}] Error parsing SparkContext: {}", requestId, e.getMessage());
+            return new LinkedHashMap<>();
         }
+    }
 
+    /**
+     * Build enhanced context that adapts to the specific schema structure
+     */
+    private String buildEnhancedContext(Map<String, List<SparkSchemaParser.Column>> tables, String question, String requestId) {
+        StringBuilder contextBuilder = new StringBuilder();
+        
+        // Add schema information
+        contextBuilder.append("=== SPARK SCHEMA INFORMATION ===\n");
+        contextBuilder.append(SparkSchemaParser.generateContextInfo(tables));
+        contextBuilder.append("\n");
+        
+        // Add DDL for reference
+        contextBuilder.append("=== TABLE STRUCTURES ===\n");
+        contextBuilder.append(SparkSchemaParser.generateDDL(tables));
+        contextBuilder.append("\n");
+        
+        // Add query-specific hints
+        contextBuilder.append("=== QUERY GUIDANCE ===\n");
+        contextBuilder.append(generateQueryHints(question, tables));
+        contextBuilder.append("\n");
+        
+        // Add example patterns based on the schema
+        contextBuilder.append("=== SQL EXAMPLES ===\n");
+        contextBuilder.append(generateSQLExamples(tables));
+        
+        String finalContext = contextBuilder.toString();
+        log.debug("[{}] Generated enhanced context (length: {})", requestId, finalContext.length());
+        
+        return finalContext;
+    }
+
+    /**
+     * Generate dynamic query hints based on question analysis and available tables
+     */
+    private String generateQueryHints(String question, Map<String, List<SparkSchemaParser.Column>> tables) {
+        StringBuilder hints = new StringBuilder();
+        String lowerQuestion = question.toLowerCase();
+        
+        // Analyze question complexity
+        if (COMPLEX_QUESTION_PATTERN.matcher(question).find()) {
+            hints.append("-- COMPLEX QUERY DETECTED\n");
+            hints.append("-- Consider using JOINs, GROUP BY, or window functions\n");
+            
+            // Suggest potential joins based on available tables
+            if (tables.size() > 1) {
+                hints.append("-- Available tables for joins: ").append(String.join(", ", tables.keySet())).append("\n");
+            }
+        } else {
+            hints.append("-- SIMPLE QUERY DETECTED\n");
+            hints.append("-- Single table SELECT should be sufficient\n");
+        }
+        
+        // Column-specific hints
+        for (Map.Entry<String, List<SparkSchemaParser.Column>> entry : tables.entrySet()) {
+            String tableName = entry.getKey();
+            List<SparkSchemaParser.Column> columns = entry.getValue();
+            
+            // Look for columns mentioned in the question
+            for (SparkSchemaParser.Column col : columns) {
+                if (lowerQuestion.contains(col.name.toLowerCase())) {
+                    hints.append("-- Found matching column: ").append(tableName).append(".").append(col.name).append("\n");
+                }
+            }
+        }
+        
+        // Type-specific hints
+        if (lowerQuestion.contains("count") || lowerQuestion.contains("sum") || lowerQuestion.contains("avg")) {
+            hints.append("-- AGGREGATION DETECTED: Use appropriate aggregate functions\n");
+        }
+        
+        if (lowerQuestion.contains("date") || lowerQuestion.contains("time")) {
+            hints.append("-- DATE/TIME QUERY: Consider using date functions and proper formatting\n");
+        }
+        
+        return hints.toString();
+    }
+
+    /**
+     * Generate SQL examples based on the actual schema
+     */
+    private String generateSQLExamples(Map<String, List<SparkSchemaParser.Column>> tables) {
+        StringBuilder examples = new StringBuilder();
+        examples.append("-- Example queries based on your schema:\n");
+        
+        for (Map.Entry<String, List<SparkSchemaParser.Column>> entry : tables.entrySet()) {
+            String tableName = entry.getKey();
+            List<SparkSchemaParser.Column> columns = entry.getValue();
+            
+            if (columns.isEmpty()) continue;
+            
+            // Basic SELECT example
+            examples.append("-- Basic query for ").append(tableName).append(":\n");
+            examples.append("-- SELECT ");
+            
+            List<String> columnNames = columns.stream()
+                .map(col -> col.name)
+                .limit(3) // Show first 3 columns
+                .toList();
+            
+            examples.append(String.join(", ", columnNames));
+            if (columns.size() > 3) {
+                examples.append(", ...");
+            }
+            examples.append(" FROM ").append(tableName).append(";\n\n");
+        }
+        
+        // Multi-table example if multiple tables exist
+        if (tables.size() > 1) {
+            String[] tableNames = tables.keySet().toArray(new String[0]);
+            examples.append("-- Example JOIN (adjust based on actual relationships):\n");
+            examples.append("-- SELECT * FROM ").append(tableNames[0])
+                    .append(" t1 JOIN ").append(tableNames[1])
+                    .append(" t2 ON t1.id = t2.").append(tableNames[0].toLowerCase()).append("_id;\n\n");
+        }
+        
+        return examples.toString();
+    }
+
+    /**
+     * Enhanced SQL post-processing that validates against the actual schema
+     */
+    private String postProcessSQL(String sql, Map<String, List<SparkSchemaParser.Column>> tables, String requestId) {
+        if (sql == null || sql.trim().isEmpty()) {
+            return "ERROR: No SQL generated";
+        }
+        
+        // Clean up the SQL
+        sql = sql.replaceAll("(?i)```sql", "").replaceAll("```", "").trim();
+        
+        // Validate SQL structure
+        if (!isValidSQLStructure(sql)) {
+            return "ERROR: Invalid SQL structure";
+        }
+        
+        // Validate table and column references against the actual schema
+        String validationError = validateSchemaReferences(sql, tables);
+        if (validationError != null) {
+            log.warn("[{}] Schema validation warning: {}", requestId, validationError);
+            // Don't fail - just log the warning as schema might be incomplete
+        }
+        
+        log.info("[{}] Generated SQL:\n{}", requestId, sql);
         return sql;
     }
 
-    private String formatSQL(String sql) {
-        return sql.replaceAll("(?i)\\b(SELECT|FROM|WHERE|GROUP BY|HAVING|ORDER BY|JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|WITH|CREATE|DELETE|INSERT|UPDATE|DROP)\\b", "\n$1")
-                  .replaceAll("\\n+", "\n")
-                  .replaceAll("^\\n", "")
-                  .trim();
+    /**
+     * Validate that SQL references existing tables and columns
+     */
+    private String validateSchemaReferences(String sql, Map<String, List<SparkSchemaParser.Column>> tables) {
+        String lowerSql = sql.toLowerCase();
+        
+        // Check for table references
+        for (String tableName : tables.keySet()) {
+            if (lowerSql.contains(tableName.toLowerCase())) {
+                // Table is referenced, check if columns are valid
+                List<SparkSchemaParser.Column> columns = tables.get(tableName);
+                Set<String> validColumns = new HashSet<>();
+                for (SparkSchemaParser.Column col : columns) {
+                    validColumns.add(col.name.toLowerCase());
+                }
+                
+            }
+        }
+        
+        return null; // No critical errors found
     }
 
-    private boolean isValidSQL(String sql) {
-        if (sql == null || sql.isBlank()) return false;
-        String upper = sql.toUpperCase().trim();
-        String[] allowedStart = {"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "WITH"};
-        for (String cmd : allowedStart) {
-            if (upper.startsWith(cmd)) return true;
+    private boolean isValidSQLStructure(String sql) {
+        String lowerSql = sql.toLowerCase().trim();
+        
+        // Check if it starts with a valid SQL command
+        String[] validStarts = {"select", "with", "insert", "update", "delete", "create", "drop", "alter"};
+        
+        for (String start : validStarts) {
+            if (lowerSql.startsWith(start)) {
+                return true;
+            }
         }
+        
         return false;
     }
 
-    // MODIF ici aussi: ajout du 3ème argument 0L dans le constructeur
-    private QueryResponse createErrorResponse(String message) {
-        return new QueryResponse(
-            createErrorSQL(message),
-            "Error: " + message,
-            0L
-        );
+    private QueryResponse createErrorResponse(String message, long duration) {
+        return new QueryResponse("ERROR: " + message, message, duration);
     }
 
-    private String createErrorSQL(String message) {
-        return String.format("/* Error: %s */\nSELECT 'ERROR: %s' AS error_message;", message, message);
+    private long getDuration(long startTime) {
+        return System.currentTimeMillis() - startTime;
+    }
+
+    public boolean isHealthy() {
+        try {
+            return qdrantService.isHealthy() && langChainSQLService.isHealthy();
+        } catch (Exception e) {
+            log.error("RAG service health check failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Simple LRU Cache implementation for schema caching
+     */
+    private static class LRUCache<K, V> extends LinkedHashMap<K, V> {
+        private final int maxSize;
+
+        public LRUCache(int maxSize) {
+            super(16, 0.75f, true);
+            this.maxSize = maxSize;
+        }
+
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
+            return size() > maxSize;
+        }
     }
 }

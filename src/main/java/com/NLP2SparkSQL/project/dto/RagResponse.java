@@ -3,6 +3,7 @@ package com.NLP2SparkSQL.project.dto;
 public class RagResponse {
     private String question;
     private String sql;
+    private long confidence;
     private long timeTakenMs;
 
     public RagResponse() {}
@@ -35,5 +36,14 @@ public class RagResponse {
 
     public void setTimeTakenMs(long timeTakenMs) {
         this.timeTakenMs = timeTakenMs;
+    }
+
+    
+    public long getscore() {
+        return confidence;
+    }
+
+    public void setscore(long confidence) {
+        this.confidence = confidence;
     }
 }

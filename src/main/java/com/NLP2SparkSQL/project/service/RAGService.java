@@ -10,8 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.regex.*;
-import java.util.stream.Collectors;  
-import lombok.extern.slf4j.Slf4j;
+import java.util.stream.Collectors;
 
 
 @Slf4j
@@ -44,7 +43,7 @@ public class RAGService {
         String requestId = UUID.randomUUID().toString().substring(0, 8);
         log.info("[{}] Processing question with dynamic context", requestId);
 
-        // Validate inputs
+        // Basic validation
         if (question == null || question.trim().isEmpty()) {
             return createErrorResponse("Question cannot be empty", getDuration(startTime));
         }
@@ -56,30 +55,46 @@ public class RAGService {
         }
 
         try {
-            // Parse the dynamic SparkContext
+            //  Parse the SparkContext (tables/columns)
             Map<String, List<SparkSchemaParser.Column>> tables = parseSparkContextSafely(sparkContext, requestId);
-            
+
             if (tables.isEmpty()) {
                 log.warn("[{}] No tables could be parsed from context", requestId);
-                return createErrorResponse("Could not extract any table information from the provided Spark context", getDuration(startTime));
+                return createErrorResponse("Could not extract any table information from the provided Spark context",
+                        getDuration(startTime));
             }
 
-            // Generate enhanced context for SQL generation
-            String enhancedContext = buildEnhancedContext(tables, question, requestId);
-            
-            // Generate SQL using the LangChain service
+            //  Create an embedding for the question
+            float[] embedding = EmbeddingUtils.embed(question);
+
+            //  Retrieve relevant example from Qdrant (similar question + SQL)
+            Map<String, String> ragExample = qdrantService.searchRelevantContextStructured(embedding);
+
+            // No more confidence check - always use nearest neighbor if exists
+            if (ragExample != null && qdrantService.hasValidResult(ragExample)) {
+                log.info("[{}] RAG example found (score: {}): {}", requestId,
+                        ragExample.get("confidence"), ragExample.get("question"));
+            } else {
+                log.info("[{}] No valid RAG example found", requestId);
+                ragExample = null;
+            }
+
+            //  Build enriched context (SparkContext + RAG example)
+            String enhancedContext = buildEnhancedContext(tables, question, ragExample, requestId);
+
+            //  Generate SQL with LangChain (based on SparkContext + RAG example)
             String sparkSql = langChainSQLService.generateSQL(enhancedContext, question);
-            
-            // Post-process and validate the generated SQL
+
+            //  Post-process and validate the SQL
             String finalSql = postProcessSQL(sparkSql, tables, requestId);
 
             long duration = getDuration(startTime);
             log.info("[{}] Successfully processed question in {}ms", requestId, duration);
-            
+
             return new QueryResponse(
-                finalSql,
-                finalSql.startsWith("ERROR:") ? "Error in SQL generation" : "SQL generated successfully",
-                duration
+                    finalSql,
+                    finalSql.startsWith("ERROR:") ? "Error in SQL generation" : "SQL generated successfully",
+                    duration
             );
 
         } catch (Exception e) {
@@ -121,33 +136,51 @@ public class RAGService {
 
     /**
      * Build enhanced context that adapts to the specific schema structure
+     * Always use the RAG example if available (no confidence check)
      */
-    private String buildEnhancedContext(Map<String, List<SparkSchemaParser.Column>> tables, String question, String requestId) {
+    private String buildEnhancedContext(Map<String, List<SparkSchemaParser.Column>> tables,
+                                        String question,
+                                        Map<String, String> ragExample,
+                                        String requestId) {
         StringBuilder contextBuilder = new StringBuilder();
         
-        // Add schema information
+        //  Add Qdrant example first (no confidence check)
+        if (ragExample != null && 
+            !ragExample.get("question").isEmpty() && 
+            !ragExample.get("sql").isEmpty()) {
+            
+            contextBuilder.append("=== RELEVANT EXAMPLE FROM QDRANT ===\n");
+            contextBuilder.append("-- Similar Question: ").append(ragExample.get("question")).append("\n");
+            contextBuilder.append("-- Suggested SQL: ").append(ragExample.get("sql")).append("\n");
+            contextBuilder.append("-- Similarity Score: ").append(ragExample.get("confidence")).append("\n\n");
+            
+            log.debug("[{}] Added RAG example to context with score: {}", requestId, ragExample.get("confidence"));
+        } else {
+            log.debug("[{}] No RAG example to add to context", requestId);
+        }
+        
+        //  Then add Spark schema
         contextBuilder.append("=== SPARK SCHEMA INFORMATION ===\n");
         contextBuilder.append(SparkSchemaParser.generateContextInfo(tables));
         contextBuilder.append("\n");
         
-        // Add DDL for reference
+        //  Add DDL
         contextBuilder.append("=== TABLE STRUCTURES ===\n");
         contextBuilder.append(SparkSchemaParser.generateDDL(tables));
         contextBuilder.append("\n");
         
-        // Add query-specific hints
+        //  Add hints
         contextBuilder.append("=== QUERY GUIDANCE ===\n");
         contextBuilder.append(generateQueryHints(question, tables));
         contextBuilder.append("\n");
         
-        // Add example patterns based on the schema
+        //  Add basic SQL examples
         contextBuilder.append("=== SQL EXAMPLES ===\n");
         contextBuilder.append(generateSQLExamples(tables));
         
-        String finalContext = contextBuilder.toString();
-        log.debug("[{}] Generated enhanced context (length: {})", requestId, finalContext.length());
+        log.debug("[{}] Generated enhanced context (length: {})", requestId, contextBuilder.length());
         
-        return finalContext;
+        return contextBuilder.toString();
     }
 
     /**
@@ -257,7 +290,7 @@ public class RAGService {
         String validationError = validateSchemaReferences(sql, tables);
         if (validationError != null) {
             log.warn("[{}] Schema validation warning: {}", requestId, validationError);
-            // Don't fail - just log the warning as schema might be incomplete
+            
         }
         
         log.info("[{}] Generated SQL:\n{}", requestId, sql);
@@ -279,11 +312,10 @@ public class RAGService {
                 for (SparkSchemaParser.Column col : columns) {
                     validColumns.add(col.name.toLowerCase());
                 }
-                
             }
         }
         
-        return null; // No critical errors found
+        return null; 
     }
 
     private boolean isValidSQLStructure(String sql) {

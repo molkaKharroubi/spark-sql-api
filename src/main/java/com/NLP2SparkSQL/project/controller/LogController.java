@@ -4,7 +4,7 @@ import com.NLP2SparkSQL.project.dto.LlmResponse;
 import com.NLP2SparkSQL.project.dto.QueryResponse;
 import com.NLP2SparkSQL.project.dto.RagRequest;
 import com.NLP2SparkSQL.project.dto.RagResponse;
-import com.NLP2SparkSQL.project.dto.SQLContextualRequest; // assuming this is your request DTO
+import com.NLP2SparkSQL.project.dto.SQLContextualRequest; 
 import com.NLP2SparkSQL.project.service.QuestionAndSparkContextService;
 import com.NLP2SparkSQL.project.service.RagAndQuestionService;
 import lombok.RequiredArgsConstructor;
@@ -34,10 +34,11 @@ public class LogController {
     public ResponseEntity<LlmResponse> generate(@Valid @RequestBody SQLContextualRequest request) {
         long startTime = System.currentTimeMillis();
 
-        QueryResponse qr = questionAndSparkContextService.generateSqlFromSchemaAndQuestion(
-            request.getSparkContext(),
-            request.getQuestion()
-        );
+       QueryResponse qr = questionAndSparkContextService.QuestionAndSparkContextService(
+    request.getSparkContext(),
+    request.getQuestion()
+);
+
 
         long endTime = System.currentTimeMillis();
 

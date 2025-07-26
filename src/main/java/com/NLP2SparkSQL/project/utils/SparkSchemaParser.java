@@ -14,7 +14,7 @@ public class SparkSchemaParser {
             return new LinkedHashMap<>();
         }
 
-        // Nettoyer le schéma (supprimer caractères de contrôle, normaliser retours à la ligne)
+        // Clean the schema (remove control characters, normalize line breaks)
         String schema = cleanSchema(rawSchema);
 
         Map<String, List<Column>> tables = tryDynamicSparkSchemaParsing(schema);
@@ -35,8 +35,8 @@ public class SparkSchemaParser {
     }
 
     /**
-     * Nettoie le schéma : supprime caractères invisibles sauf tabulations et retours à la ligne,
-     * normalise les retours à la ligne.
+     * Cleans the schema: removes invisible characters except tabs and line breaks,
+     * normalizes line breaks.
      */
     private static String cleanSchema(final String schema) {
         return schema.replaceAll("[\\u0000-\\u001F&&[^\\n\\t]]", "")
@@ -46,15 +46,15 @@ public class SparkSchemaParser {
     }
 
     /**
-     * Stratégie principale : parsing dynamique du format Spark avec indentation variable.
+     * Main strategy: dynamic parsing of Spark format with variable indentation.
      */
    private static Map<String, List<Column>> tryDynamicSparkSchemaParsing(final String schema) {
     Map<String, List<Column>> tables = new LinkedHashMap<>();
 
-    // Pattern pour table (racine)
+    // Pattern for table (root)
     Pattern tablePattern = Pattern.compile("\\|--\\s+([a-zA-Z_][\\w_]*)\\s*:\\s*struct\\s*\\(nullable\\s*=\\s*\\w+\\)", Pattern.CASE_INSENSITIVE);
 
-    // Pattern pour colonnes, incluant celles dans struct imbriqué
+    // Pattern for columns, including those in nested structs
     Pattern columnPattern = Pattern.compile("\\|(?:\\s*\\|)*--\\s+([a-zA-Z_][\\w_]*)\\s*:\\s*([a-zA-Z_][\\w_<>()\\[\\],\\s]*)\\s*\\(nullable\\s*=\\s*\\w+\\)", Pattern.CASE_INSENSITIVE);
 
     String[] lines = schema.split("\\n");
@@ -77,7 +77,7 @@ public class SparkSchemaParser {
                 String colName = columnMatcher.group(1);
                 String sparkType = columnMatcher.group(2).trim().toLowerCase();
 
-                // On ignore toujours les array (optionnel), mais PAS les struct
+                // Always ignore arrays (optional), but NOT structs
                 if (!sparkType.contains("array")) {
                     String sqlType = mapSparkTypeToSQL(sparkType);
                     tables.get(currentTable).add(new Column(colName, sqlType));
@@ -91,7 +91,7 @@ public class SparkSchemaParser {
 }
 
     /**
-     * Stratégie fallback 1 : parsing struct-based
+     * Fallback strategy 1: struct-based parsing
      */
     private static Map<String, List<Column>> tryStructBasedParsing(final String schema) {
         Map<String, List<Column>> tables = new LinkedHashMap<>();
@@ -131,7 +131,7 @@ public class SparkSchemaParser {
     }
 
     /**
-     * Stratégie fallback 2 : parsing output classique DataFrame.printSchema()
+     * Fallback strategy 2: classic DataFrame.printSchema() output parsing
      */
     private static Map<String, List<Column>> tryDataFrameBasedParsing(final String schema) {
         Map<String, List<Column>> tables = new LinkedHashMap<>();
@@ -152,7 +152,7 @@ public class SparkSchemaParser {
                 String colName = matcher.group(1);
                 String sparkType = matcher.group(2).trim();
 
-                // Nettoyer type (supprimer info nullable)
+                // Clean type (remove nullable info)
                 sparkType = sparkType.replaceAll("\\s*\\(.*\\)", "").trim();
 
                 String sqlType = mapSparkTypeToSQL(sparkType);
@@ -168,7 +168,7 @@ public class SparkSchemaParser {
     }
 
     /**
-     * Stratégie fallback 3 : parsing générique de paires clé-valeur
+     * Fallback strategy 3: generic key-value pair parsing
      */
     private static Map<String, List<Column>> tryGenericParsing(final String schema) {
         Map<String, List<Column>> tables = new LinkedHashMap<>();
@@ -225,7 +225,7 @@ public class SparkSchemaParser {
     }
 
     /**
-     * Mapping des types Spark vers types SQL simples
+     * Mapping Spark types to simple SQL types
      */
     private static String mapSparkTypeToSQL(final String sparkType) {
         if (sparkType == null) return "STRING";
@@ -265,7 +265,7 @@ public class SparkSchemaParser {
     }
 
     /**
-     * Génération d'un script DDL SQL CREATE TABLE à partir du schema parsé
+     * Generate a SQL CREATE TABLE DDL script from the parsed schema
      */
     public static String generateDDL(final Map<String, List<Column>> tables) {
         if (tables.isEmpty()) {
@@ -300,7 +300,7 @@ public class SparkSchemaParser {
     }
 
     /**
-     * Génère un résumé textuel des tables et colonnes pour contextualiser la génération SQL
+     * Generates a textual summary of tables and columns to provide context for SQL generation
      */
     public static String generateContextInfo(final Map<String, List<Column>> tables) {
         if (tables.isEmpty()) {
@@ -330,7 +330,7 @@ public class SparkSchemaParser {
     }
 
     /**
-     * Infère les relations potentielles basées sur la convention _id dans les colonnes
+     * Infers potential relationships based on the convention of _id suffix in columns
      */
     public static String getInferredRelationships(final Map<String, List<Column>> tables) {
         StringBuilder relationships = new StringBuilder();
@@ -395,7 +395,7 @@ public class SparkSchemaParser {
     }
 
     /**
-     * Classe interne représentant une colonne (nom + type SQL)
+     * Inner class representing a column (name + SQL type)
      */
     public static class Column {
         public final String name;
