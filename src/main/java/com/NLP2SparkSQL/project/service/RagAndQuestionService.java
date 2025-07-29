@@ -15,7 +15,7 @@ public class RagAndQuestionService {
 
     private final QdrantService qdrantService;
 
-    // Méthode principale
+    // Main method
     public RagResponse findExample(String question, String sql, String schema) {
         long start = System.currentTimeMillis();
 
@@ -49,9 +49,9 @@ public class RagAndQuestionService {
             return new RagResponse("", "", duration);
         }
 
-        // Vérification simplifiée - juste s'assurer que les données sont présentes
+        // Simplified check - just ensure data is present
         if (!qdrantService.hasValidResult(result)) {
-            log.info("Aucune donnée valide trouvée dans le résultat");
+            log.info("No valid data found in the result");
             return new RagResponse("", "", duration);
         }
 
@@ -61,7 +61,7 @@ public class RagAndQuestionService {
 
         long confidenceValue = 0;
         try {
-            // Garder le score pour information, mais ne plus l'utiliser pour filtrer
+            // Keep the score for info, but no longer use it for filtering
             confidenceValue = Math.round(Double.parseDouble(confidenceStr) * 100);
         } catch (NumberFormatException e) {
             log.warn("Unable to parse confidence value: {}", confidenceStr);
@@ -70,12 +70,12 @@ public class RagAndQuestionService {
         RagResponse response = new RagResponse(foundQuestion, foundSql, duration);
         response.setscore(confidenceValue);
 
-        log.info("Plus proche voisin retourné avec score: {}", confidenceValue);
+        log.info("Nearest neighbor returned with score: {}", confidenceValue);
 
         return response;
     }
 
-    // Surcharge pour ne prendre que la question
+    // Overload to accept only question
     public RagResponse findExample(String question) {
         return findExample(question, null, null);
     }

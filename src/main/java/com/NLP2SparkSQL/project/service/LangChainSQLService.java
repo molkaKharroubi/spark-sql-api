@@ -160,6 +160,7 @@ public class LangChainSQLService {
                 String response = future.get(timeoutSeconds, TimeUnit.SECONDS);
                 String result = extractContentFromResponse(response);
 
+
                 if (result != null && !result.trim().isEmpty()) {
                     log.debug("[{}] Successfully generated SQL on attempt {}", requestId, attempt);
                     return result;
@@ -211,7 +212,7 @@ public class LangChainSQLService {
         1. Use ONLY tables and columns mentioned in the schema
         2. Do not invent or assume any table/column names
         3. Always use proper Spark SQL syntax
-        4. For questions about distribution/grouping, use GROUP BY with appropriate aggregation
+        4. For questions about distribution/grouping, use GROUP BY with appropriate aggregation 
         5. When joining tables, use explicit JOIN syntax with ON conditions
         6. Use table aliases for better readability
         7. Return only the SQL query, no explanations
@@ -297,54 +298,47 @@ public class LangChainSQLService {
         }
     }
 
-    private String cleanSQL(String sql) {
-        if (sql == null || sql.trim().isEmpty()) return "";
+private String cleanSQL(String sql) {
+    if (sql == null || sql.trim().isEmpty()) return "";
 
-        // Initial cleanup - remove comments, code blocks, etc.
-        String cleaned = sql
-                .replaceAll("(?is)<think>.*?</think>", "")
-                .replaceAll("(?s)/\\*.*?\\*/", "")
-                .replaceAll("--.*", "")
-                .replaceAll("(?s)```sql\\s*", "")
-                .replaceAll("(?s)```\\s*", "")
-                .replaceAll("(?im)^(Explanation|Answer|Question|SQL|Query):.*$", "")
-                .replaceAll("<[^>]+>", "")
-                .replaceAll("\\n{2,}", "\n")
-                .trim();
+    // Remove hidden reasoning tags like <think>...</think>
+    String cleaned = sql.replaceAll("(?is)<think>.*?</think>", "");
 
-        if (cleaned.contains("INSUFFICIENT_DATA")) {
-            return "SELECT 'INSUFFICIENT_DATA' AS message;";
-        }
+    // Remove SQL-style comments (/* ... */ and -- ...)
+    cleaned = cleaned.replaceAll("(?s)/\\*.*?\\*/", "");
+    cleaned = cleaned.replaceAll("--.*", "");
 
-        // Better handling of CTEs and regular queries
-        String sqlUpper = cleaned.toUpperCase().trim();
-        
-        // Find the first valid SQL keyword
-        String[] validStarts = {"WITH", "SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP","ALTER TABLE"};
-        int earliestIndex = -1;
-        
-        for (String keyword : validStarts) {
-            int index = sqlUpper.indexOf(keyword);
-            if (index != -1 && (earliestIndex == -1 || index < earliestIndex)) {
-                earliestIndex = index;
-            }
-        }
-        
-        // If we find a valid keyword, start from there
-        if (earliestIndex != -1) {
-            cleaned = cleaned.substring(earliestIndex);
-        }
+    // Remove Markdown code block markers
+    cleaned = cleaned.replaceAll("(?s)```sql", "");
+    cleaned = cleaned.replaceAll("(?s)```", "");
 
-        // Clean up multiple spaces
-        cleaned = cleaned.replaceAll("\\s+", " ");
+    // Remove any HTML tags if present
+    cleaned = cleaned.replaceAll("<[^>]+>", "");
 
-        // Ensure the query ends with semicolon
-        if (!cleaned.endsWith(";")) {
-            cleaned += ";";
-        }
+    // Remove Markdown headers (e.g., ### Title)
+    cleaned = cleaned.replaceAll("(?m)^#+.*$", "");
 
-        return cleaned;
+    // Remove bullet points (lines starting with - or •)
+    cleaned = cleaned.replaceAll("(?m)^[-•]\\s.*$", "");
+
+    // Remove bold text markers like **text**
+    cleaned = cleaned.replaceAll("\\*\\*.*?\\*\\*", "");
+
+    // Remove labels like “SQL:”, “Query:”, “Answer:”, etc.
+    cleaned = cleaned.replaceAll("(?im)^(Explanation|Answer|Question|SQL|Query|Notes?):.*$", "");
+
+    // Collapse multiple empty lines into a single line
+    cleaned = cleaned.replaceAll("\\n{2,}", "\n").trim();
+
+    // Normalize spaces and ensure the query ends with a semicolon
+    cleaned = cleaned.replaceAll("\\s+", " ").trim();
+
+    if (!cleaned.endsWith(";")) {
+        cleaned += ";";
     }
+
+    return cleaned;
+}
 
     private boolean isValidSparkSQL(String sql) {
         if (sql == null || sql.trim().isEmpty()) return false;
@@ -357,7 +351,7 @@ public class LangChainSQLService {
                              sqlUpper.startsWith("DELETE") ||
                              sqlUpper.startsWith("CREATE") ||
                              sqlUpper.startsWith("DROP") ||
-                             sqlUpper.startsWith("ALTERA") ||
+                             sqlUpper.startsWith("ALTER") ||
                              sqlUpper.startsWith("WITH");
 
         if (!validStart) return false;

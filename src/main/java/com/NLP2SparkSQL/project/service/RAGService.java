@@ -273,7 +273,7 @@ public class RAGService {
     /**
      * Enhanced SQL post-processing that validates against the actual schema
      */
-    private String postProcessSQL(String sql, Map<String, List<SparkSchemaParser.Column>> tables, String requestId) {
+   private String postProcessSQL(String sql, Map<String, List<SparkSchemaParser.Column>> tables, String requestId) {
         if (sql == null || sql.trim().isEmpty()) {
             return "ERROR: No SQL generated";
         }
@@ -296,7 +296,6 @@ public class RAGService {
         log.info("[{}] Generated SQL:\n{}", requestId, sql);
         return sql;
     }
-
     /**
      * Validate that SQL references existing tables and columns
      */
