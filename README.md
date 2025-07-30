@@ -10,7 +10,7 @@ This Java Spring Boot API empowers users to write natural language questions and
 
 ### 🔧 Core Components
 
-* **LangChain4J** – Orchestrates the LLM, manages prompts, and contextual understanding.
+* **LangChain4J** – Orchestrates the LLM, manages prompts, and contextual understanding. 
 * **Ollama (Qwen3:1.7B)** – Local LLM for generating Spark SQL queries.
 * **Qdrant** – Vector database for semantic search & context retrieval.
 * **Apache Spark** – Executes the generated SQL queries on data.
@@ -20,11 +20,16 @@ This Java Spring Boot API empowers users to write natural language questions and
 
 ## ✨ Features
 
-✅ Translate natural language into Spark SQL
+✅ Translate natural language into Spark SQL 
+
 ✅ Local LLM support with **Qwen3** via Ollama
+
 ✅ Semantic search using **Qdrant**
+
 ✅ Retrieval-Augmented Generation (RAG)
+
 ✅ Spark SQL execution of generated queries
+
 ✅ **Swagger UI** for interactive API documentation
 
 ---
