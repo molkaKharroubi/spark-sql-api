@@ -121,21 +121,3 @@ networks:
 ```bash
 docker-compose up -d
 ```
-
----
-
-## 📊 Deployment Architecture
-
-![Deployment Architecture](https://i.imgur.com/YOUR-DEPLOYMENT-IMAGE.png)
-
----
-
-## 📜 License
-
-This project is licensed under the **MIT License**.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Feel free to fork this repo, open issues, or submit pull requests.
