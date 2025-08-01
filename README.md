@@ -97,7 +97,7 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - ollama_data:/root/.ollama    # ✅ on garde juste ce volume
+      - ollama_data:/root/.ollama    
     networks:
       - app-network
     restart: unless-stopped
