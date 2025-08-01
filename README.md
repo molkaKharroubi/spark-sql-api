@@ -165,7 +165,7 @@ Invoke-RestMethod -Uri http://localhost:8080/api/generate-sql-with-context `
     "question": "List employees by department"
   }'
 ---
-
+---
 ## 📚 Data Sources & Credits
 
 This project uses the **[Spider](https://yale-lily.github.io/spider)** dataset:  
