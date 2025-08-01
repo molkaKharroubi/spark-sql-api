@@ -97,7 +97,7 @@ Once the API is running, you can send a **POST** request to the `/api/generate-s
 
 ---
 
-### 📥 Example Request
+### 📥 Example Request (PowerShell)
 
 ```powershell
 Invoke-RestMethod -Uri http://localhost:8080/api/generate-sql-with-context `
