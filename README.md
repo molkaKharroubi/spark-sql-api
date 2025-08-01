@@ -1,4 +1,4 @@
-# NLP to Spark SQL API
+# NLP to Spark SQL Spring Boot API
 
 A **modular** and **intelligent** Spring Boot API that converts **natural language questions into Spark SQL queries**, leveraging **LangChain4J**, **Ollama**, and **Qdrant**.
 
