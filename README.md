@@ -78,31 +78,57 @@ mvn spring-boot:run
 Here is the **Docker Compose** configuration for running the stack:
 
 ```yaml
+version: '3.8'
+
 services:
   qdrant:
-    image: molka001/qdrant-data:v3   
+    image: molka001/qdrant-data:v3
     container_name: qdrant_data
     ports:
       - "6333:6333"
       - "6334:6334"
-    restart: unless-stopped
     networks:
       - app-network
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama    # ✅ on garde juste ce volume
+    networks:
+      - app-network
+    restart: unless-stopped
+    entrypoint: |
+      /bin/sh -c "
+      ollama serve &
+      sleep 5 &&
+      ollama pull qwen3:1.7b &&
+      wait
+      "
 
   spark-sql-api:
-    image: molka001/spark-sql-api:v2
+    image: molka001/spark-sql-api:v3
     container_name: spark-sql-api
     depends_on:
       - qdrant
+      - ollama
     ports:
       - "8080:8080"
     environment:
       - QDRANT_URL=http://qdrant:6333
-    restart: unless-stopped
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=qwen3:1.7b
     volumes:
-      - ./sparkSQL_data:/sparkSQL/storage   
+      - ./sparkSQL_data:/sparkSQL/storage
     networks:
       - app-network
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
 
 networks:
   app-network:
@@ -111,11 +137,13 @@ networks:
 
 ✅ This setup:
 
-* Runs **Qdrant** and **Spark SQL API** in the same network.
-* Exposes Qdrant on ports **6333** & **6334** and the API on **8080**.
-* Mounts a local volume for **Spark SQL data persistence**.
-* Uses `depends_on` so **Spark SQL API** starts after Qdrant.
+* Connects Qdrant, Ollama, and Spark SQL API via a shared Docker network.
 
+* Exposes Qdrant on ports 6333 & 6334, Ollama on 11434, and the API on 8080.
+
+* Uses depends_on to start Spark SQL API after Qdrant and Ollama are ready.
+
+* Persists Ollama model data and Spark SQL storage with Docker volumes.
 ### ▶️ Run the services
 
 ```bash
