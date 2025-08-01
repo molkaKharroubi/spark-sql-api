@@ -15,14 +15,15 @@ import java.util.Map;
 @Service
 public class QdrantService {
 
-    @Value("${qdrant.url:http://localhost:6333}")
+    @Value("${QDRANT_URL:${qdrant.url:http://localhost:6333}}")
     private String qdrantUrl;
 
-    @Value("${qdrant.collection.name:my_sql_docs}")
-    private String collectionName;
+@Value("${QDRANT_COLLECTION_NAME:${qdrant.collection.name:my_sql_docs}}")
+private String collectionName;
 
-    @Value("${qdrant.search.top:1}")
-    private int topResults;
+@Value("${QDRANT_SEARCH_TOP:${qdrant.search.top:1}}")
+private int topResults;
+
 
     private final WebClient webClient;
 

@@ -28,9 +28,9 @@ public class LangChainSQLService {
     );
 
     public LangChainSQLService(
-            @Value("${ollama.url:http://localhost:11434}") String ollamaUrl,
-            @Value("${ollama.model:qwen3:1.7b}") String modelName,
-            @Value("${ollama.timeout:600}") long timeoutSeconds
+        @Value("${OLLAMA_URL:${ollama.url:http://localhost:11434}}") String ollamaUrl,
+        @Value("${OLLAMA_MODEL:${ollama.model:qwen3:1.7b}}") String modelName,
+        @Value("${ollama.timeout:600}") long timeoutSeconds
     ) {
         this.timeoutSeconds = timeoutSeconds;
         log.info("Initializing Ollama model with URL: {}, model: {}, timeout: {}s", 
