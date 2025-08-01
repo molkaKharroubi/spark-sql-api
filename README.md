@@ -149,6 +149,24 @@ networks:
 ```bash
 docker-compose up -d
 ```
+---
+
+## ▶️ How to Use the API
+
+Once the API is running , you can send a **POST** request to the `/api/generate-sql-with-context` endpoint.
+
+### 📥 Example Request
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:8080/api/generate-sql-with-context `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body '{
+    "sparkContext": "df_employees struct \n |-- id: integer (nullable = false)\n |-- name: string (nullable = true)\n |-- age: integer (nullable = false)\n |-- department: string (nullable = true)\n |-- salary: double (nullable = false)\n |-- hire_date: string (nullable = true)\n |-- email: string (nullable = true)",
+    "question": "List employees by department"
+  }'
+
+
 ## 📚 Data Sources & Credits
 
 This project uses the **[Spider](https://yale-lily.github.io/spider)** dataset:  
