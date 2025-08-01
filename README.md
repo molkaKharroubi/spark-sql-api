@@ -150,7 +150,7 @@ networks:
 docker-compose up -d
 ```
 
-## ▶️ How to Use the API
+### ▶️ How to Use the API
 
 Once the API is running , you can send a **POST** request to the `/api/generate-sql-with-context` endpoint.
 
