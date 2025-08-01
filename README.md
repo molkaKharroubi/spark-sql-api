@@ -75,65 +75,7 @@ mvn spring-boot:run
 
 ## 🐳 Docker Deployment
 
-Here is the **Docker Compose** configuration for running the stack:
-
-```yaml
-version: '3.8'
-
-services:
-  qdrant:
-    image: molka001/qdrant-data:v3
-    container_name: qdrant_data
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    networks:
-      - app-network
-    restart: unless-stopped
-
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama    
-    networks:
-      - app-network
-    restart: unless-stopped
-    entrypoint: |
-      /bin/sh -c "
-      ollama serve &
-      sleep 5 &&
-      ollama pull qwen3:1.7b &&
-      wait
-      "
-
-  spark-sql-api:
-    image: molka001/spark-sql-api:v3
-    container_name: spark-sql-api
-    depends_on:
-      - qdrant
-      - ollama
-    ports:
-      - "8080:8080"
-    environment:
-      - QDRANT_URL=http://qdrant:6333
-      - OLLAMA_URL=http://ollama:11434
-      - OLLAMA_MODEL=qwen3:1.7b
-    volumes:
-      - ./sparkSQL_data:/sparkSQL/storage
-    networks:
-      - app-network
-    restart: unless-stopped
-
-volumes:
-  ollama_data:
-
-networks:
-  app-network:
-    driver: bridge
-```
+A **Docker Compose** file is included in the project for easy deployment of the full stack.  
 
 ✅ This setup:
 
