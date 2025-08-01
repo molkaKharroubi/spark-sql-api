@@ -149,7 +149,6 @@ networks:
 ```bash
 docker-compose up -d
 ```
----
 
 ## ▶️ How to Use the API
 
